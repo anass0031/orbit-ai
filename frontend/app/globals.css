@@ -1,0 +1,50 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background-color: #090d18;
+  color: #f8fafc;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  overflow-x: hidden;
+}
+
+/* Subtle scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #090d18;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+@layer components {
+  .orbit-input {
+    @apply w-full px-3 py-2 rounded-lg bg-orbit-card border border-orbit-border text-xs text-white placeholder-orbit-subtle focus:outline-none focus:border-orbit-purple disabled:opacity-50;
+  }
+  .orbit-label {
+    @apply text-[10px] font-semibold uppercase tracking-wider text-orbit-subtle;
+  }
+  .orbit-table th {
+    @apply text-left text-[10px] font-semibold uppercase tracking-wider text-orbit-subtle px-3 py-2.5 border-b border-orbit-border whitespace-nowrap;
+  }
+  .orbit-table td {
+    @apply px-3 py-2.5 text-xs border-b border-orbit-border/60 align-middle;
+  }
+  .orbit-table tbody tr {
+    @apply hover:bg-white/[0.02] transition;
+  }
+}

@@ -1,0 +1,8 @@
+Order ID;Client;Code Postal;Montant;Date Commande;Payé;Créé le
+1;Alice Martin;01000;12,50;05/01/2024;true;2024-01-05T10:00:00Z
+2;Bob Durand;75001;7;25/12/2024;false;2024-01-06T11:30:00Z
+3;Chloé Petit;;3,10;01/02/2024;true;2024-01-07T09:15:00Z
+4;Driss Alaoui;20000;45,00;14/02/2024;false;2024-02-14T16:45:00Z
+5;Emma Leroy;13000;8,99;03/03/2024;true;
+6;Fatima Zahra;10000;120,00;15/03/2024;true;2024-03-15T12:00:00Z;ligne en trop
+7;Gabriel Roux;06000;19,90;30/03/2024;false;2024-03-30T08:20:00Z

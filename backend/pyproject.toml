@@ -1,0 +1,15 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -p no:cacheprovider"
+
+[tool.ruff]
+line-length = 130
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+# B008: FastAPI's Depends()/File() defaults are the documented pattern. UP038: deprecated rule.
+ignore = ["B008", "UP038"]
+
+[tool.ruff.lint.isort]
+known-third-party = ["alembic"]

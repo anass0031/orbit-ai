@@ -1,0 +1,92 @@
+{
+  "data": [
+    {
+      "id": "C001",
+      "nom": "Alice Martin",
+      "adresse": {
+        "ville": "Lyon",
+        "pays": "France"
+      },
+      "segments": ["premium"],
+      "inscrit_le": "2023-04-12",
+      "actif": true
+    },
+    {
+      "id": "C002",
+      "nom": "Bob Durand",
+      "adresse": {
+        "ville": "Paris",
+        "pays": "France"
+      },
+      "segments": [],
+      "inscrit_le": "2023-06-01",
+      "actif": false
+    },
+    {
+      "id": "C003",
+      "nom": "Driss Alaoui",
+      "adresse": {
+        "ville": "Casablanca",
+        "pays": "Maroc"
+      },
+      "segments": ["b2b", "premium"],
+      "inscrit_le": "2024-01-20",
+      "actif": true
+    },
+    {
+      "id": "C004",
+      "nom": "Sara Benali",
+      "adresse": {
+        "ville": "Rabat",
+        "pays": "Maroc"
+      },
+      "segments": ["premium"],
+      "inscrit_le": "2024-03-15",
+      "actif": true
+    },
+    {
+      "id": "C005",
+      "nom": "Thomas Bernard",
+      "adresse": {
+        "ville": "Marseille",
+        "pays": "France"
+      },
+      "segments": ["b2b"],
+      "inscrit_le": "2023-09-22",
+      "actif": false
+    },
+    {
+      "id": "C006",
+      "nom": "Yasmine El Fassi",
+      "adresse": {
+        "ville": "Marrakech",
+        "pays": "Maroc"
+      },
+      "segments": ["premium", "b2b"],
+      "inscrit_le": "2024-05-10",
+      "actif": true
+    },
+    {
+      "id": "C007",
+      "nom": "Lucas Moreau",
+      "adresse": {
+        "ville": "Bordeaux",
+        "pays": "France"
+      },
+      "segments": [],
+      "inscrit_le": "2023-11-08",
+      "actif": true
+    },
+    {
+      "id": "C008",
+      "nom": "Nadia Amrani",
+      "adresse": {
+        "ville": "Tanger",
+        "pays": "Maroc"
+      },
+      "segments": ["b2b"],
+      "inscrit_le": "2024-07-19",
+      "actif": false
+    }
+  ]
+}

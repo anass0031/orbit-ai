@@ -1,0 +1,94 @@
+# ORBIT AI — week 3 stack: PostgreSQL (metadata) + MinIO (lakehouse) + FastAPI + Next.js.
+# Values come from `.env` (copy from .env.example).
+#   docker compose up -d --build        # everything
+#   docker compose up -d postgres minio # infrastructure only (backend/frontend run on your PC)
+#   docker compose down                 # stop, KEEPS the data volumes
+#   docker compose down -v              # stop AND DELETE all data (database + lakehouse files)
+name: orbit-ai-semaine3
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-orbit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-orbit}
+    ports: ["${BIND_ADDRESS:-127.0.0.1}:${POSTGRES_HOST_PORT:-5433}:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-orbit} -d ${POSTGRES_DB:-orbit}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  minio:
+    # The official minio/minio image is no longer published; pgsty/minio is a maintained community build of MinIO.
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-orbitminio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${MINIO_API_HOST_PORT:-9000}:9000"
+      - "${BIND_ADDRESS:-127.0.0.1}:${MINIO_CONSOLE_HOST_PORT:-9001}:9001"
+    volumes: [miniodata:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    build: ./backend
+    environment:
+      ORBIT_ENV: ${ORBIT_ENV:-development}
+      ORBIT_LOG_LEVEL: ${ORBIT_LOG_LEVEL:-INFO}
+      ORBIT_JWT_SECRET: ${ORBIT_JWT_SECRET:?set ORBIT_JWT_SECRET in .env}
+      ORBIT_ACCESS_TOKEN_MINUTES: ${ORBIT_ACCESS_TOKEN_MINUTES:-480}
+      ORBIT_DEMO_PASSWORD: ${ORBIT_DEMO_PASSWORD:?set ORBIT_DEMO_PASSWORD in .env}
+      ORBIT_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-orbit}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-orbit}
+      ORBIT_STORAGE_BACKEND: s3
+      ORBIT_S3_ENDPOINT: http://minio:9000
+      ORBIT_S3_BUCKET: ${ORBIT_S3_BUCKET:-orbit-lakehouse}
+      ORBIT_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-orbitminio}
+      ORBIT_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      ORBIT_DATA_DIR: /data/runtime
+      ORBIT_UPLOAD_MAX_MB: ${ORBIT_UPLOAD_MAX_MB:-100}
+      ORBIT_PREVIEW_ROWS: ${ORBIT_PREVIEW_ROWS:-50}
+      ORBIT_CORS_ORIGINS: ${ORBIT_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+    # Migrations (Alembic) and the demo accounts are applied on every start; both are idempotent.
+    command: >
+      sh -c "alembic upgrade head && python -m app.db.seed &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers"
+    ports: ["${BIND_ADDRESS:-127.0.0.1}:${API_HOST_PORT:-8000}:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health',timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports: ["${BIND_ADDRESS:-127.0.0.1}:${FRONTEND_HOST_PORT:-3000}:3000"]
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/login"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  miniodata:
