@@ -1,6 +1,6 @@
 "use client";
 
-import { LogOut } from "lucide-react";
+import { Bell, LogOut } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import React from "react";
@@ -10,12 +10,13 @@ import { useAuth } from "@/lib/auth";
 import { NAV } from "@/lib/nav";
 import type { Health } from "@/lib/types";
 
-const COMPONENT_LABELS: Record<string, string> = { database: "PostgreSQL", object_storage: "MinIO" };
+const COMPONENT_LABELS: Record<string, string> = { database: "PostgreSQL", object_storage: "MinIO", job_queue: "Job queue" };
 
 export function Sidebar() {
   const pathname = usePathname();
   const { me, can, logout } = useAuth();
   const { data: health } = useSWR<Health>("/health", { refreshInterval: 30000 });
+  const { data: unread } = useSWR<{ unread: number }>("/notifications?unread=true&limit=1", { refreshInterval: 20000 });
   const initials = (me?.user.full_name || "?").split(" ").map((p) => p[0]).join("").slice(0, 2).toUpperCase();
 
   return (
@@ -27,6 +28,10 @@ export function Sidebar() {
           </div>
           <span className="font-bold tracking-wider text-[15px] text-white">ORBIT</span>
           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orbit-purple/20 text-orbit-purpleLight border border-orbit-purple/30">AI</span>
+        </Link>
+        <Link href="/notifications" className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] text-orbit-nav hover:text-white hover:bg-white/[0.04]" title="Notifications">
+          <Bell className="w-4 h-4" />
+          {unread?.unread ? <span className="px-1.5 rounded-full bg-orbit-red text-white text-[10px] font-semibold">{unread.unread}</span> : <span className="text-orbit-subtle">no new alert</span>}
         </Link>
 
         <nav className="space-y-1">

@@ -26,3 +26,6 @@ data/runtime/
 Thumbs.db
 .idea/
 .vscode/
+
+# copies of the files exported by pipelines
+exports/

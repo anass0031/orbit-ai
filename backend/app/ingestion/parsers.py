@@ -1,4 +1,4 @@
-"""Read an uploaded file (CSV, Excel, JSON) into a table of *text* cells.
+"""Read an uploaded text-like file (CSV, Excel, JSON, XML, YAML) into a table of *text* cells (Parquet: see parquet.py).
 
 Every value is kept as a string (or None) at this stage; `schema.py` then decides the type of each
 column. Reading everything as text first means nothing is silently changed by the parser
@@ -18,10 +18,14 @@ from pathlib import PurePath
 
 import pandas as pd
 
+from app.ingestion import nested
+
 EXTENSIONS = {
     ".csv": "csv", ".tsv": "csv", ".txt": "csv",
     ".xlsx": "excel", ".xlsm": "excel",
     ".json": "json", ".jsonl": "json", ".ndjson": "json",
+    ".parquet": "parquet",
+    ".xml": "xml", ".yaml": "yaml", ".yml": "yaml",
 }
 SUPPORTED = ", ".join(sorted(EXTENSIONS))
 DELIMITERS = [",", ";", "\t", "|"]
@@ -36,7 +40,7 @@ class ParseOptions:
     delimiter: str | None = None  # CSV: None = detect automatically
     has_header: bool = True  # CSV
     encoding: str | None = None  # CSV/JSON: None = UTF-8, falling back to Windows-1252
-    sheet_name: str | None = None  # Excel: None = first sheet
+    sheet_name: str | None = None  # Excel sheet, or entity of a JSON / XML / YAML document. None = the first one
 
     def as_dict(self) -> dict:
         return {k: v for k, v in self.__dict__.items() if v is not None}
@@ -65,7 +69,9 @@ def parse(data: bytes, fmt: str, filename: str, options: ParseOptions | None = N
     if fmt == "excel":
         return _excel(data, opts)
     if fmt == "json":
-        return _json(data, opts)
+        return _json(data, opts, filename)
+    if fmt in ("xml", "yaml"):
+        return _document(data, fmt, opts, filename)
     raise ParseError(f"Unsupported format '{fmt}'. Supported extensions: {SUPPORTED}")
 
 
@@ -184,13 +190,43 @@ def _excel(data: bytes, opts: ParseOptions) -> RawTable:
                     options_used={"sheet_name": sheet, "has_header": opts.has_header})
 
 
+# ── entities of hierarchical documents ───────────────────────────────────────
+def _stem(filename: str) -> str:
+    return nested.snake(PurePath(filename).stem)
+
+
+def _entity_table(entities: dict[str, list[dict]], wanted: str, notes: list[str], options: dict) -> RawTable:
+    if wanted not in entities:
+        raise ParseError(f"Entity '{wanted}' not found. Available entities: {', '.join(entities)}")
+    rows = entities[wanted]
+    columns = list(dict.fromkeys(k for r in rows for k in r))
+    return RawTable(columns=columns, rows=[[_cell(r.get(c)) for c in columns] for r in rows], notes=notes, sheets=list(entities) if len(entities) > 1 else [],
+                    options_used={**options, "sheet_name": wanted})
+
+
+def _document(data: bytes, fmt: str, opts: ParseOptions, filename: str) -> RawTable:
+    notes: list[str] = []
+    text, encoding = _decode(data, opts.encoding, notes)
+    try:
+        doc = nested.read_xml(text) if fmt == "xml" else nested.read_yaml(text)
+        entities = nested.extract(doc, _stem(filename))
+    except nested.DocumentError as exc:
+        raise ParseError(str(exc)) from exc
+    if not entities:
+        raise ParseError(f"No records found in the {fmt.upper()} file")
+    if len(entities) > 1:
+        notes.append(f"The document holds {len(entities)} related entities: {', '.join(entities)}.")
+    return _entity_table(entities, opts.sheet_name or next(iter(entities)), notes, {"encoding": encoding})
+
+
 # ── JSON / JSON Lines ────────────────────────────────────────────────────────
-def _json(data: bytes, opts: ParseOptions) -> RawTable:
+def _json(data: bytes, opts: ParseOptions, filename: str = "records.json") -> RawTable:
     notes: list[str] = []
     text, encoding = _decode(data, opts.encoding, notes)
     text = text.strip()
     records: list[dict] = []
     bad: list[dict] = []
+    whole = None
     if text.startswith("[") or text.startswith("{"):
         try:
             doc = json.loads(text)
@@ -199,10 +235,14 @@ def _json(data: bytes, opts: ParseOptions) -> RawTable:
                 doc = None  # probably JSON Lines (one object per line)
             else:
                 raise ParseError(f"Invalid JSON: {exc}") from exc
+        whole = doc
         if isinstance(doc, dict):
             lists = [k for k, v in doc.items() if isinstance(v, list) and v and all(isinstance(x, dict) for x in v)]
             if len(lists) == 1:
                 notes.append(f"Records were read from the '{lists[0]}' array of the JSON document.")
+                doc = doc[lists[0]]
+            elif len(lists) > 1:
+                notes.append(f"The document holds {len(lists)} collections: {', '.join(lists)}. The first one is shown.")
                 doc = doc[lists[0]]
             else:
                 doc = [doc]
@@ -229,10 +269,20 @@ def _json(data: bytes, opts: ParseOptions) -> RawTable:
     if not records:
         raise ParseError("No JSON objects found in the file")
 
+    try:
+        entities = nested.extract(whole if whole is not None else records, _stem(filename))
+    except nested.DocumentError as exc:
+        raise ParseError(str(exc)) from exc
+    if opts.sheet_name:
+        return _entity_table(entities, opts.sheet_name, notes, {"encoding": encoding})
+    if len(entities) > 1:
+        notes.append(f"Related entities found in this document: {', '.join(entities)}. Choose one to load it as its own table.")
+
     # Nested objects become flat columns (customer.city → customer_city); arrays stay as JSON text.
     df = pd.json_normalize(records, sep="_")
     columns = [str(c) for c in df.columns]
     rows = [[_cell(v) for v in rec] for rec in df.astype(object).itertuples(index=False, name=None)]
     if any(isinstance(v, dict) for r in records[:500] for v in r.values()):
         notes.append("Nested JSON objects were flattened into separate columns (parent_child).")
-    return RawTable(columns=columns, rows=rows, quarantined=bad, notes=notes, options_used={"encoding": encoding})
+    return RawTable(columns=columns, rows=rows, quarantined=bad, notes=notes, sheets=list(entities) if len(entities) > 1 else [],
+                    options_used={"encoding": encoding})

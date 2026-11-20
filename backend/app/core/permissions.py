@@ -1,10 +1,9 @@
 """Role → permission matrix for the three roles of the cahier des charges.
 
 - admin          : manages the whole platform, the users and reads the audit log.
-- data_engineer  : imports files (schema discovery + Bronze ingestion) and reads the catalogue.
-- analyst        : reads the catalogue (datasets, schemas, previews) and the import history.
-
-Later weeks add permissions (pipelines, quality, SQL, ML, AI) to this same table.
+- data_engineer  : imports files, builds and runs pipelines (Silver / Gold), defines quality rules.
+- analyst        : reads the catalogue, pipelines, runs and quality results, handles quality anomalies and
+                   documents datasets (glossary, column descriptions).
 """
 
 ROLES = ("admin", "data_engineer", "analyst")
@@ -15,20 +14,14 @@ ROLE_LABELS = {
     "analyst": "Analyst",
 }
 
+_READ = {"imports.read", "datasets.read", "pipelines.read", "runs.read", "quality.read", "glossary.read"}
+_ENGINEER = _READ | {"imports.write", "pipelines.write", "pipelines.run", "quality.write", "quality.run", "quality.triage",
+                    "catalog.document"}
+
 ROLE_PERMISSIONS: dict[str, set[str]] = {
-    "admin": {
-        "imports.read", "imports.write",
-        "datasets.read",
-        "users.manage", "audit.read",
-    },
-    "data_engineer": {
-        "imports.read", "imports.write",
-        "datasets.read",
-    },
-    "analyst": {
-        "imports.read",
-        "datasets.read",
-    },
+    "admin": _ENGINEER | {"users.manage", "audit.read"},
+    "data_engineer": _ENGINEER,
+    "analyst": _READ | {"quality.triage", "catalog.document"},
 }
 
 

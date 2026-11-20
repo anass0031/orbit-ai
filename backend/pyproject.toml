@@ -3,7 +3,7 @@ testpaths = ["tests"]
 addopts = "-q -p no:cacheprovider"
 
 [tool.ruff]
-line-length = 130
+line-length = 140
 target-version = "py311"
 
 [tool.ruff.lint]
@@ -13,3 +13,10 @@ ignore = ["B008", "UP038"]
 
 [tool.ruff.lint.isort]
 known-third-party = ["alembic"]
+
+[tool.ruff.lint.per-file-ignores]
+# pipeline tools: SQL templates and long messages
+"app/processing/*" = ["E501"]
+"app/services/*" = ["E501"]
+"app/api/v1/*" = ["E501"]
+"tests/*" = ["E501"]

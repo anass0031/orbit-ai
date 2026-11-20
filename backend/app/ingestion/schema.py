@@ -22,7 +22,7 @@ from decimal import Decimal
 import pandas as pd
 import pyarrow as pa
 
-from app.ingestion.parsers import RawTable
+from app.ingestion.parsers import ParseOptions, RawTable, parse
 
 NULL_TOKENS = {"", "na", "n/a", "null", "none", "nan", "nat", "#n/a"}
 RE_INT = r"[+-]?(?:0|[1-9]\d{0,17})"
@@ -144,8 +144,11 @@ def infer_type(values: pd.Series) -> tuple[str, dict, list[str]]:
     warns = []
     numeric = _share(values, RE_FLOAT + "|" + RE_FLOAT_COMMA)
     if numeric >= 0.8:
-        bad = values[~values.str.fullmatch(RE_FLOAT + "|" + RE_FLOAT_COMMA)].iloc[0]
-        warns.append(f"is {numeric:.0%} numeric but contains non-numeric values such as '{bad[:40]}' — kept as text")
+        others = values[~values.str.fullmatch(RE_FLOAT + "|" + RE_FLOAT_COMMA)]
+        if others.empty:
+            warns.append("mixes decimal points and decimal commas — kept as text, convert it with a Clean step")
+        else:
+            warns.append(f"is {numeric:.0%} numeric but contains non-numeric values such as '{others.iloc[0][:40]}' — kept as text")
     dates = _share(values, RE_TIMESTAMP + "|" + RE_DATE_SLASH)
     if 0.8 <= dates < 1:
         bad = values[~values.str.fullmatch(RE_TIMESTAMP + "|" + RE_DATE_SLASH)].iloc[0]
@@ -228,6 +231,15 @@ def discover(raw: RawTable) -> Discovery:
                      primary_key=pk, sheets=raw.sheets, options_used=raw.options_used)
 
 
+def discover_file(data: bytes, fmt: str, filename: str, options: ParseOptions | None = None) -> Discovery:
+    """Schema discovery of an uploaded file, whatever its format."""
+    if fmt == "parquet":
+        from app.ingestion.parquet import discover_parquet
+
+        return discover_parquet(data)
+    return discover(parse(data, fmt, filename, options))
+
+
 def column_types(schema: list[dict]) -> dict[str, str]:
     return {c["name"]: c["type"] for c in schema}
 
@@ -239,3 +251,20 @@ def diff_schema(old: list[dict], new: list[dict]) -> dict:
         "removed": [k for k in o if k not in n],
         "changed": [{"column": k, "from": o[k], "to": n[k]} for k in n if k in o and o[k] != n[k]],
     }
+
+
+def arrow_type_name(t: pa.DataType) -> str:
+    """Catalogue type name of an Arrow type (same vocabulary as schema discovery)."""
+    if pa.types.is_boolean(t):
+        return "boolean"
+    if pa.types.is_integer(t):
+        return "integer"
+    if pa.types.is_floating(t) or pa.types.is_decimal(t):
+        return "double"
+    if pa.types.is_date(t):
+        return "date"
+    if pa.types.is_timestamp(t):
+        return "timestamp"
+    if pa.types.is_string(t) or pa.types.is_large_string(t):
+        return "string"
+    return str(t)

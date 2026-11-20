@@ -32,6 +32,10 @@ class ObjectStorage(ABC):
     def uri(self, key: str) -> str: ...
 
     @abstractmethod
+    def list_keys(self, prefix: str) -> list[dict]:
+        """Objects under a prefix: [{key, size, modified}] sorted by key."""
+
+    @abstractmethod
     def ping(self) -> str:
         """Raise when the storage is unreachable; return a short description otherwise."""
 
@@ -68,6 +72,16 @@ class LocalStorage(ObjectStorage):
 
     def uri(self, key):
         return f"file://{self._p(key).as_posix()}"
+
+    def list_keys(self, prefix):
+        from datetime import UTC, datetime
+
+        base = self._p(prefix) if prefix else self.root
+        if not base.exists():
+            return []
+        files = [p for p in (base.rglob("*") if base.is_dir() else [base]) if p.is_file()]
+        return sorted(({"key": p.relative_to(self.root).as_posix(), "size": p.stat().st_size,
+                        "modified": datetime.fromtimestamp(p.stat().st_mtime, UTC)} for p in files), key=lambda x: x["key"])
 
     def ping(self):
         return f"local folder {self.root}"
@@ -128,6 +142,17 @@ class S3Storage(ObjectStorage):
 
     def uri(self, key):
         return f"s3://{self.bucket}/{key}"
+
+    def list_keys(self, prefix):
+        self.ensure_bucket()
+        out, token = [], None
+        while True:
+            kw = {"Bucket": self.bucket, "Prefix": prefix, **({"ContinuationToken": token} if token else {})}
+            page = self.client.list_objects_v2(**kw)
+            out += [{"key": o["Key"], "size": o["Size"], "modified": o["LastModified"]} for o in page.get("Contents", [])]
+            if not page.get("IsTruncated"):
+                return sorted(out, key=lambda x: x["key"])
+            token = page["NextContinuationToken"]
 
     def ping(self):
         self.ensure_bucket()

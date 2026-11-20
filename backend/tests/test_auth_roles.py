@@ -11,6 +11,7 @@ def test_health_is_public(client):
     assert body["status"] == "ok"
     assert body["components"]["database"]["status"] == "up"
     assert body["components"]["object_storage"]["status"] == "up"
+    assert body["components"]["job_queue"]["status"] == "up"
 
 
 def test_login_returns_jwt_with_role(client):
@@ -110,3 +111,13 @@ def test_role_change_takes_effect_without_new_login(client, as_admin, as_enginee
     client.patch(f"/api/v1/users/{eng['id']}", headers=as_admin, json={"role": "analyst"})
     r = client.post("/api/v1/imports", headers=as_engineer, files={"file": ("a.csv", b"id\n1\n", "text/csv")})
     assert r.status_code == 403  # permissions are read from the database role, not from the token
+
+
+def test_cors_preflight_allows_every_method_the_frontend_uses(client):
+    for origin in ("http://localhost:3000", "http://127.0.0.1:3000"):
+        for method in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+            r = client.options("/api/v1/pipelines/x", headers={
+                "Origin": origin, "Access-Control-Request-Method": method,
+                "Access-Control-Request-Headers": "authorization,content-type"})
+            assert r.status_code == 200, (origin, method)
+            assert r.headers["access-control-allow-origin"] == origin

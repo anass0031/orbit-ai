@@ -13,9 +13,9 @@ import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { ago, bytes, compact } from "@/lib/format";
 import { useToast } from "@/lib/toast";
-import type { FileImport, ImportSummary, Page } from "@/lib/types";
+import type { BatchResult, FileImport, ImportSummary, Page } from "@/lib/types";
 
-const ACCEPT = ".csv,.tsv,.txt,.xlsx,.xlsm,.json,.jsonl,.ndjson";
+const ACCEPT = ".csv,.tsv,.txt,.xlsx,.xlsm,.json,.jsonl,.ndjson,.parquet,.xml,.yaml,.yml";
 const LIMIT = 20;
 
 function UploadCard() {
@@ -78,7 +78,7 @@ function UploadCard() {
         ) : (
           <>
             <div className="text-sm font-semibold text-white">Drop a file here or click to browse</div>
-            <div className="text-xs text-orbit-muted mt-1">CSV / TSV, Excel (.xlsx), JSON or JSON Lines</div>
+            <div className="text-xs text-orbit-muted mt-1">CSV / TSV, Excel (.xlsx), JSON, JSON Lines, XML, YAML or Parquet</div>
           </>
         )}
         <input ref={input} type="file" accept={ACCEPT} className="hidden" onChange={(e) => pick(e.target.files?.[0])} />
@@ -111,6 +111,54 @@ function UploadCard() {
   );
 }
 
+function BatchCard() {
+  const notify = useToast();
+  const input = useRef<HTMLInputElement>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [combine, setCombine] = useState(false);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<BatchResult | null>(null);
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    const form = new FormData();
+    files.forEach((f) => form.append("files", f));
+    if (combine) form.append("dataset_name", name.trim());
+    try {
+      const out = await api<BatchResult>("/imports/batch", { method: "POST", body: form });
+      setResult(out);
+      notify(`${out.summary.ingested} loaded, ${out.summary.skipped} skipped, ${out.summary.failed} failed`, out.summary.failed ? "error" : "success");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Card>
+      <CardHeader title="Load several files" subtitle="Files of different formats are accepted. Related entities in one file become separate Bronze datasets, and a file that fails does not stop the others." />
+      <div className="flex flex-wrap items-center gap-3">
+        <Button icon={UploadCloud} onClick={() => input.current?.click()}>{files.length ? `${files.length} file(s) selected` : "Choose files"}</Button>
+        <input ref={input} type="file" multiple accept={ACCEPT} className="hidden" onChange={(e) => { setFiles(Array.from(e.target.files ?? [])); setResult(null); }} />
+        <label className="flex items-center gap-2 text-xs text-white"><input type="checkbox" checked={combine} onChange={(e) => setCombine(e.target.checked)} />Combine into one dataset</label>
+        {combine && <input className="orbit-input !w-56" placeholder="dataset_name" value={name} onChange={(e) => setName(e.target.value)} />}
+        <Button variant="primary" icon={FileUp} loading={busy} disabled={!files.length || (combine && !name.trim())} onClick={submit}>Load into Bronze</Button>
+      </div>
+      {error && <InlineAlert tone="red" className="mt-3">{error}</InlineAlert>}
+      {result && (
+        <table className="orbit-table w-full mt-3">
+          <thead><tr><th>File</th><th>Dataset</th><th>Status</th><th className="text-right">Rows</th></tr></thead>
+          <tbody>{result.results.map((r) => (
+            <tr key={r.filename + r.dataset}><td>{r.filename}</td><td className="font-mono">{r.dataset}</td><td><StatusPill status={r.status === "ingested" ? "succeeded" : r.status} />{r.reason && <div className="text-[11px] text-orbit-muted">{r.reason}</div>}</td><td className="text-right font-mono">{compact(r.rows ?? null)}</td></tr>
+          ))}</tbody>
+        </table>
+      )}
+    </Card>
+  );
+}
+
 export default function ImportsPage() {
   const { can } = useAuth();
   const [status, setStatus] = useState("all");
@@ -120,7 +168,7 @@ export default function ImportsPage() {
 
   return (
     <PageContainer>
-      {can("imports.write") ? <UploadCard /> : (
+      {can("imports.write") ? <><UploadCard /><BatchCard /></> : (
         <InlineAlert tone="cyan">Your role can browse the import history. Uploading files is reserved to Data Engineers and Administrators.</InlineAlert>
       )}
 

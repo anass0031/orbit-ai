@@ -1,7 +1,7 @@
-"""File imports and the lakehouse catalogue (Bronze layer this week; Silver/Gold arrive in week 4)."""
+"""File imports and the lakehouse catalogue (Bronze from imports, Silver / Gold from pipelines)."""
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, IdMixin, JSONType, TimestampMixin, utcnow
@@ -51,6 +51,15 @@ class Dataset(IdMixin, TimestampMixin, Base):
     size_bytes: Mapped[int | None] = mapped_column(BigInteger)
     owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     last_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # mean score (0-100) of the latest result of every enabled quality rule; None = never checked
+    quality_score: Mapped[float | None] = mapped_column(Float)
+    # documentation written by analysts / engineers: tags and per-column descriptions ({column: text})
+    tags: Mapped[list | None] = mapped_column(JSONType)
+    column_docs: Mapped[dict | None] = mapped_column(JSONType)
+    # star schema (Gold): fact | dimension | mart, primary key and [{column, dimension}] relationships
+    model_role: Mapped[str | None] = mapped_column(String(16))
+    primary_key: Mapped[list | None] = mapped_column(JSONType)
+    relationships: Mapped[list | None] = mapped_column(JSONType)
 
     @property
     def qualified_name(self) -> str:
@@ -69,6 +78,8 @@ class DatasetVersion(IdMixin, Base):
     size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     schema: Mapped[list] = mapped_column(JSONType, default=list)
     schema_changes: Mapped[dict] = mapped_column(JSONType, default=dict)  # {added, removed, changed} vs previous
-    source_import_id: Mapped[str | None] = mapped_column(String(32))
+    source_import_id: Mapped[str | None] = mapped_column(String(32))  # Bronze: the file import
+    pipeline_run_id: Mapped[str | None] = mapped_column(String(32))  # Silver / Gold: the pipeline run
+    lineage: Mapped[list | None] = mapped_column(JSONType)  # Silver / Gold: [{dataset_id, qualified_name, version}] read by the run
     created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

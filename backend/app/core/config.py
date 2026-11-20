@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     # metadata database (PostgreSQL in Docker; SQLite is only used by the tests)
     database_url: str = "sqlite:///./orbit.db"
 
+    # background jobs: Redis broker for the Celery worker. tasks_eager=true runs jobs inside the API process
+    # (used by the tests, or to run without a worker).
+    redis_url: str = "redis://localhost:6380/0"
+    tasks_eager: bool = False
+    max_run_attempts: int = 3
+
     # object storage: s3 = MinIO (default), local = folder on disk (tests / no Docker)
     storage_backend: str = "s3"
     s3_endpoint: str = "http://localhost:9000"
@@ -38,9 +44,23 @@ class Settings(BaseSettings):
     s3_region: str = "us-east-1"
     data_dir: Path = Path("data/runtime")
 
+    # pipeline automation and destinations
+    smtp_host: str = ""  # empty = e-mail reports and notifications are disabled
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "orbit@localhost"
+    smtp_tls: bool = True
+    export_dir: str = ""  # optional shared folder that also receives a copy of every exported file
+    python_transform_enabled: bool = True
+    python_timeout_s: int = 60
+    python_memory_mb: int = 2048
+    public_url: str = "http://localhost:3000"  # links in e-mails and notifications
+
     # limits
     upload_max_mb: int = 100
     preview_rows: int = 50
+    pipeline_preview_rows: int = 1000  # rows read from each input when previewing a pipeline step
 
     @property
     def cors_origin_list(self) -> list[str]:

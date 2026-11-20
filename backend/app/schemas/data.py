@@ -1,3 +1,5 @@
+from typing import Literal
+
 from datetime import datetime
 
 from pydantic import BaseModel, Field
@@ -44,6 +46,7 @@ class DiscoverIn(BaseModel):
 class IngestIn(BaseModel):
     dataset_name: str = Field(min_length=1, max_length=63)
     description: str | None = Field(default=None, max_length=1000)
+    mode: Literal["replace", "append"] = "replace"
 
 
 class DatasetVersionOut(ORM):
@@ -54,6 +57,8 @@ class DatasetVersionOut(ORM):
     size_bytes: int
     schema_changes: dict
     source_import_id: str | None = None
+    pipeline_run_id: str | None = None
+    lineage: list[dict] | None = None
     created_by_id: str | None = None
     created_at: datetime
 
@@ -72,6 +77,12 @@ class DatasetOut(ORM):
     owner_id: str | None = None
     created_at: datetime
     last_updated_at: datetime | None = None
+    quality_score: float | None = None
+    tags: list[str] | None = None
+    column_docs: dict | None = None
+    model_role: str | None = None
+    primary_key: list[str] | None = None
+    relationships: list[dict] | None = None
 
 
 class DatasetDetail(DatasetOut):

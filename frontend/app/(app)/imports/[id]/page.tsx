@@ -27,7 +27,7 @@ function OptionsCard({ imp, onDone }: { imp: FileImport; onDone: (i: FileImport)
     try {
       const body = imp.file_format === "excel"
         ? { sheet_name: sheet, has_header: hasHeader }
-        : imp.file_format === "csv"
+        : imp.sheets.length > 1 ? { sheet_name: sheet } : imp.file_format === "csv"
           ? { delimiter: delimiter === "tab" ? "\t" : delimiter || null, has_header: hasHeader }
           : {};
       const next = await api<FileImport>(`/imports/${imp.id}/discover`, { method: "POST", body });
@@ -40,7 +40,7 @@ function OptionsCard({ imp, onDone }: { imp: FileImport; onDone: (i: FileImport)
     }
   };
 
-  if (imp.file_format === "json") return null;
+  if (["json", "xml", "yaml"].includes(imp.file_format) && imp.sheets.length < 2) return null;
   return (
     <Card>
       <CardHeader title="Reading options" subtitle="Change them and run discovery again if the result does not look right." />
@@ -56,8 +56,8 @@ function OptionsCard({ imp, onDone }: { imp: FileImport; onDone: (i: FileImport)
             </select>
           </Field>
         )}
-        {imp.file_format === "excel" && (
-          <Field label="Sheet">
+        {imp.sheets.length > 0 && (
+          <Field label={imp.file_format === "excel" ? "Sheet" : "Entity"}>
             <select className="orbit-input" value={sheet} onChange={(e) => setSheet(e.target.value)}>
               {imp.sheets.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>

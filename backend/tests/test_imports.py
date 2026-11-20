@@ -84,8 +84,8 @@ def test_ingest_writes_versioned_bronze_parquet(client, as_engineer, as_analyst)
 
     listing = client.get("/api/v1/datasets?layer=bronze", headers=as_analyst).json()
     assert [d["name"] for d in listing] == ["orders"]
-    stats = client.get("/api/v1/overview", headers=as_analyst).json()
-    assert stats["bronze_datasets"] == 1 and stats["imports_by_status"]["ingested"] == 2
+    stats = client.get("/api/v1/dashboard", headers=as_analyst).json()
+    assert stats["layers"]["bronze"]["datasets"] == 1 and stats["imports"]["by_status"]["ingested"] == 2
 
 
 def test_excel_upload_with_several_sheets(client, as_engineer):

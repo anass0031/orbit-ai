@@ -1,10 +1,42 @@
-# ORBIT AI — week 3 stack: PostgreSQL (metadata) + MinIO (lakehouse) + FastAPI + Next.js.
+# ORBIT AI — week 4 stack: PostgreSQL (metadata) + MinIO (lakehouse) + Redis (job queue)
+# + FastAPI (API) + Celery worker (pipeline runs, DuckDB) + Next.js (interface).
 # Values come from `.env` (copy from .env.example).
-#   docker compose up -d --build        # everything
-#   docker compose up -d postgres minio # infrastructure only (backend/frontend run on your PC)
+#   docker compose up -d --build              # everything
+#   docker compose up -d postgres minio redis # infrastructure only (backend/frontend run on your PC)
 #   docker compose down                 # stop, KEEPS the data volumes
 #   docker compose down -v              # stop AND DELETE all data (database + lakehouse files)
-name: orbit-ai-semaine3
+name: orbit-ai-semaine4
+
+# Configuration shared by the API and the worker (same image, same settings)
+x-backend-env: &backend-env
+  ORBIT_ENV: ${ORBIT_ENV:-development}
+  ORBIT_LOG_LEVEL: ${ORBIT_LOG_LEVEL:-INFO}
+  ORBIT_JWT_SECRET: ${ORBIT_JWT_SECRET:?set ORBIT_JWT_SECRET in .env}
+  ORBIT_ACCESS_TOKEN_MINUTES: ${ORBIT_ACCESS_TOKEN_MINUTES:-480}
+  ORBIT_DEMO_PASSWORD: ${ORBIT_DEMO_PASSWORD:?set ORBIT_DEMO_PASSWORD in .env}
+  ORBIT_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-orbit}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-orbit}
+  ORBIT_REDIS_URL: redis://redis:6379/0
+  ORBIT_TASKS_EAGER: "false"
+  ORBIT_MAX_RUN_ATTEMPTS: ${ORBIT_MAX_RUN_ATTEMPTS:-3}
+  ORBIT_STORAGE_BACKEND: s3
+  ORBIT_S3_ENDPOINT: http://minio:9000
+  ORBIT_S3_BUCKET: ${ORBIT_S3_BUCKET:-orbit-lakehouse}
+  ORBIT_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-orbitminio}
+  ORBIT_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+  ORBIT_DATA_DIR: /data/runtime
+  ORBIT_UPLOAD_MAX_MB: ${ORBIT_UPLOAD_MAX_MB:-100}
+  # pipeline destinations and notifications
+  ORBIT_SMTP_HOST: ${ORBIT_SMTP_HOST_DOCKER:-mailpit}
+  ORBIT_SMTP_PORT: ${ORBIT_SMTP_PORT_DOCKER:-1025}
+  ORBIT_SMTP_USER: ${ORBIT_SMTP_USER:-}
+  ORBIT_SMTP_PASSWORD: ${ORBIT_SMTP_PASSWORD:-}
+  ORBIT_SMTP_FROM: ${ORBIT_SMTP_FROM:-orbit@localhost}
+  ORBIT_SMTP_TLS: ${ORBIT_SMTP_TLS_DOCKER:-false}
+  ORBIT_EXPORT_DIR: /exports
+  ORBIT_PYTHON_TRANSFORM_ENABLED: ${ORBIT_PYTHON_TRANSFORM_ENABLED:-true}
+  ORBIT_PUBLIC_URL: ${ORBIT_PUBLIC_URL:-http://localhost:3000}
+  ORBIT_PREVIEW_ROWS: ${ORBIT_PREVIEW_ROWS:-50}
+  ORBIT_CORS_ORIGINS: ${ORBIT_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
 
 services:
   postgres:
@@ -40,37 +72,69 @@ services:
       retries: 20
     restart: unless-stopped
 
+  redis:
+    image: redis:7.4-alpine
+    ports: ["${BIND_ADDRESS:-127.0.0.1}:${REDIS_HOST_PORT:-6380}:6379"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # Local e-mail server for the demo: receives every e-mail sent by ORBIT (reports, notifications) — nothing leaves the PC.
+  mailpit:
+    image: axllent/mailpit:v1.21.8
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${MAILPIT_UI_HOST_PORT:-8025}:8025"
+      - "${BIND_ADDRESS:-127.0.0.1}:${MAILPIT_SMTP_HOST_PORT:-1025}:1025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   api:
     build: ./backend
-    environment:
-      ORBIT_ENV: ${ORBIT_ENV:-development}
-      ORBIT_LOG_LEVEL: ${ORBIT_LOG_LEVEL:-INFO}
-      ORBIT_JWT_SECRET: ${ORBIT_JWT_SECRET:?set ORBIT_JWT_SECRET in .env}
-      ORBIT_ACCESS_TOKEN_MINUTES: ${ORBIT_ACCESS_TOKEN_MINUTES:-480}
-      ORBIT_DEMO_PASSWORD: ${ORBIT_DEMO_PASSWORD:?set ORBIT_DEMO_PASSWORD in .env}
-      ORBIT_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-orbit}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-orbit}
-      ORBIT_STORAGE_BACKEND: s3
-      ORBIT_S3_ENDPOINT: http://minio:9000
-      ORBIT_S3_BUCKET: ${ORBIT_S3_BUCKET:-orbit-lakehouse}
-      ORBIT_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-orbitminio}
-      ORBIT_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-      ORBIT_DATA_DIR: /data/runtime
-      ORBIT_UPLOAD_MAX_MB: ${ORBIT_UPLOAD_MAX_MB:-100}
-      ORBIT_PREVIEW_ROWS: ${ORBIT_PREVIEW_ROWS:-50}
-      ORBIT_CORS_ORIGINS: ${ORBIT_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+    environment: *backend-env
     # Migrations (Alembic) and the demo accounts are applied on every start; both are idempotent.
     command: >
       sh -c "alembic upgrade head && python -m app.db.seed &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers"
     ports: ["${BIND_ADDRESS:-127.0.0.1}:${API_HOST_PORT:-8000}:8000"]
+    volumes: ["${ORBIT_EXPORT_HOST_DIR:-./exports}:/exports"]  # shared folder: copies of the exported files
     depends_on:
       postgres: {condition: service_healthy}
       minio: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      mailpit: {condition: service_healthy}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health',timeout=3).status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  # Executes pipeline runs (DuckDB) taken from the Redis queue. Same image as the API.
+  # `-B` also runs Celery beat: the scheduler (every 60 s) drives the pipeline automation.
+  worker:
+    build: ./backend
+    environment: *backend-env
+    command: celery -A app.worker.celery_app worker -B -l info --concurrency=2
+    volumes: ["${ORBIT_EXPORT_HOST_DIR:-./exports}:/exports"]
+    depends_on:
+      api: {condition: service_healthy}  # the API applies the database migrations first
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.worker.celery_app inspect ping -d celery@$$HOSTNAME --timeout 5 | grep -q pong"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
       start_period: 20s
     restart: unless-stopped
 
@@ -92,3 +156,4 @@ services:
 volumes:
   pgdata:
   miniodata:
+  redisdata:

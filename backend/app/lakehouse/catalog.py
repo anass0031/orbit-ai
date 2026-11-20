@@ -27,6 +27,10 @@ from app.models import Dataset, DatasetVersion, User
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 
 
+class SchemaIncompatible(ValidationFailed):
+    code = "schema_incompatible"
+
+
 def suggest_name(filename: str) -> str:
     stem = filename.rsplit(".", 1)[0]
     n = re.sub(r"[^a-z0-9_]+", "_", stem.strip().lower()).strip("_")
@@ -50,8 +54,15 @@ def to_parquet_bytes(table: pa.Table) -> bytes:
 
 
 def write_version(db: Session, *, layer: str, name: str, table: pa.Table, schema: list[dict], user: User | None,
-                  description: str | None = None, source_import_id: str | None = None) -> tuple[Dataset, DatasetVersion]:
-    """Write `table` as the next version of `layer.name`. The caller commits the session."""
+                  description: str | None = None, source_import_id: str | None = None,
+                  pipeline_run_id: str | None = None, append: bool = False,
+                  lineage: list[dict] | None = None) -> tuple[Dataset, DatasetVersion]:
+    """Write `table` as the next version of `layer.name`. The caller commits the session.
+
+    append=False: the new version contains exactly `table`.
+    append=True : the new version = previous version + `table` (incremental loads). Columns are
+                  matched by name; a new column is added (null in older rows), a widened type (int → double) is promoted.
+    """
     validate_dataset_name(name)
     ds = db.scalar(select(Dataset).where(Dataset.layer == layer, Dataset.name == name))
     if ds is None:
@@ -62,6 +73,13 @@ def write_version(db: Session, *, layer: str, name: str, table: pa.Table, schema
     elif description:
         ds.description = description
     previous = ds.schema or []
+    if append and ds.current_version:
+        prev = read_table(get_version(db, ds, None))
+        try:
+            table = pa.concat_tables([prev, table], promote_options="permissive")
+        except (pa.ArrowInvalid, pa.ArrowTypeError) as exc:
+            raise SchemaIncompatible(f"New rows do not fit the schema of {ds.qualified_name}: {exc}") from exc
+        schema = _merge_schema(previous, schema, table)
     version = (ds.current_version or 0) + 1
     version_id = new_id()
     key = f"{layer}/{name}/v{version}/{version_id}.parquet"
@@ -72,7 +90,8 @@ def write_version(db: Session, *, layer: str, name: str, table: pa.Table, schema
         dv = DatasetVersion(id=version_id, dataset_id=ds.id, version=version, location=key, row_count=table.num_rows,
                             size_bytes=len(data), schema=schema,
                             schema_changes=diff_schema(previous, schema) if previous else {},
-                            source_import_id=source_import_id, created_by_id=user.id if user else None)
+                            source_import_id=source_import_id, pipeline_run_id=pipeline_run_id,
+                            lineage=lineage, created_by_id=user.id if user else None)
         db.add(dv)
         db.flush()
         ds.schema = schema
@@ -86,6 +105,15 @@ def write_version(db: Session, *, layer: str, name: str, table: pa.Table, schema
         storage.delete(key)  # keep storage and catalogue consistent
         raise
     return ds, dv
+
+
+def _merge_schema(previous: list[dict], new: list[dict], table: pa.Table) -> list[dict]:
+    """Catalogue schema after an append: keep column metadata, types from the combined Parquet table."""
+    from app.ingestion.schema import arrow_type_name
+
+    meta = {c["name"]: c for c in previous}
+    meta.update({c["name"]: c for c in new})
+    return [{**meta.get(f.name, {"name": f.name}), "type": arrow_type_name(f.type), "nullable": f.nullable} for f in table.schema]
 
 
 def discard_version(dv: DatasetVersion) -> None:
@@ -106,6 +134,27 @@ def get_version(db: Session, ds: Dataset, version: int | None) -> DatasetVersion
     if dv is None:
         raise NotFound(f"Version {v} of {ds.qualified_name} not found")
     return dv
+
+
+def find_dataset(db: Session, layer: str, name: str) -> Dataset | None:
+    return db.scalar(select(Dataset).where(Dataset.layer == layer, Dataset.name == name))
+
+
+def read_table(dv: DatasetVersion, limit: int | None = None) -> pa.Table:
+    """Load a dataset version from object storage. limit=0 → empty table with the right schema (dry runs)."""
+    pf = pq.ParquetFile(io.BytesIO(get_storage().get_bytes(dv.location)))
+    if limit is None:
+        return pf.read()
+    if limit == 0:
+        return pf.schema_arrow.empty_table()
+    batches, n = [], 0
+    for b in pf.iter_batches(batch_size=min(limit, 65536)):
+        batches.append(b)
+        n += b.num_rows
+        if n >= limit:
+            break
+    t = pa.Table.from_batches(batches, schema=pf.schema_arrow) if batches else pf.schema_arrow.empty_table()
+    return t.slice(0, limit)
 
 
 def preview(dv: DatasetVersion, limit: int) -> dict:
